@@ -1,0 +1,35 @@
+#!/bin/bash
+
+## The name of the job, can be anything, simply used when displaying the list of running jobs
+#$ -N <%= job.name %>
+
+## Combining output/error messages into one file
+#$ -j y
+
+## Giving the name of the output log file
+#$ -o <%= log.file %>
+
+## Receive e-mail
+## no.. you don't want an email setting in the main job, submitting 100s 
+## of jobs will at least generate 100s of e-mails, been there
+## 
+## Better do it with a secondary job (see the e-mail template) 
+## that depends on the first one
+
+## One needs to tell the queue system to use the current directory as the working directory
+## Or else the script may fail as it will execute in your top level home directory /home/username
+#$ -cwd
+
+## Use environment variables
+## #$ -V
+
+## Use correct queue
+#$ -q <%= resources$queue %>
+
+## Set up your environment, e.g. load modules
+
+## Export value of DEBUGME environemnt var to slave
+export DEBUGME=<%= Sys.getenv("DEBUGME") %>
+  
+exec Rscript -e 'batchtools::doJobCollection("<%= uri %>")'
+exit 1

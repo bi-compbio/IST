@@ -1,0 +1,232 @@
+---
+title: "Built-in orthology mappings"
+author: "Sergio Picart-Armada"
+date: "24th March, 2020"
+output:
+  html_document:
+    toc: TRUE
+    toc_float: true
+    code_folding: hide
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, 
+                      error = FALSE, warning = FALSE, 
+                      fig.height = 4)
+```
+
+## Loading packages
+
+```{r}
+library(tidyverse)
+library(data.table)
+
+if (!dir.exists("03_data")) dir.create("03_data")
+
+devtools::load_all()
+
+set.seed(1)
+```
+
+For reproducibility
+
+```{r}
+# https://useast.ensembl.org/info/website/archives/index.html
+url.current <- "jan2020.archive.ensembl.org"
+```
+
+
+## Orthology mapping
+
+```{r}
+# this uses IST's orthIDcon function
+v.orgfrom <- c("mmusculus", "rnorvegicus", "hsapiens")
+data.list.orth <- lapply(
+  setNames(v.orgfrom, v.orgfrom), 
+  orthIDcon, 
+  org.to = "hsapiens", 
+  host = url.current)
+comment(data.list.orth) <- paste0(
+  "Date: ", date(), 
+  " || biomaRt version: ", packageVersion("biomaRt"), 
+  " || Ensembl archive: ", url.current)
+```
+
+Number of mappings
+
+```{r}
+sapply(data.list.orth, nrow)
+```
+
+How these look like
+
+```{r}
+lapply(data.list.orth, head)
+```
+
+Summaries:
+
+```{r}
+lapply(data.list.orth, summary)
+```
+
+Save internal file
+
+```{r}
+save(data.list.orth, file = "../data/data.list.orth.RData", compress = "xz")
+```
+
+
+## Gene labels
+
+Provide by default a data.frame mapping unique ENSEMBL gene identifiers to 
+more readable labels.
+
+Original mapping:
+
+```{r}
+ensembl.hsa <- biomaRt::useMart(
+    host = url.current, 
+    biomart = "ensembl", 
+    dataset = "hsapiens_gene_ensembl")
+
+map.hsa <- biomaRt::getBM(
+    attributes = c("entrezgene_id", "ensembl_gene_id", "external_gene_name"),
+    values = TRUE,
+    mart = ensembl.hsa) %>%
+  mutate(entrezgene_id = as.character(entrezgene_id), 
+         external_gene_name = ifelse(external_gene_name == "", NA, external_gene_name))
+```
+
+Multiple entrez/symbols are collapsed using `||` as separator.
+The ENSEMBL id is not only appended for traceability,
+but because there can be several ENSEMBL identifiers mapping to the 
+same entrez/symbols, causing collisions in plots.
+
+```{r}
+data.dt.genelabels <- data.table(map.hsa)
+
+# use "-" to identify NAs
+data.dt.genelabels[is.na(data.dt.genelabels)] <- "-"
+
+data.dt.genelabels <- data.dt.genelabels[
+  , by = ensembl_gene_id, 
+  lapply(.SD, function(x) paste(unique(x), collapse = "||")), 
+  .SDcols = c("entrezgene_id", "external_gene_name")]
+
+# paste ensembl id at the end
+data.dt.genelabels[
+  , ':='(
+    entrezgene_id = paste0(entrezgene_id, " (", ensembl_gene_id, ")"), 
+    external_gene_name = paste0(external_gene_name, " (", ensembl_gene_id, ")"), 
+    # Update: added a posteriori to have succint labels, only ENSG when necessary
+    external_gene_name_only = ifelse(is.na(external_gene_name), paste0("- (", ensembl_gene_id, ")"), external_gene_name)
+  )
+]
+
+# Update: duplicates appear when using external_gene as a main label
+# for those that have a duplicate, group by gene name, and add the ENSG
+v.external.gene.duplicated <- subset(data.dt.genelabels, duplicated(external_gene_name_only))$external_gene_name_only %>%
+    unique
+
+data.dt.genelabels[
+    external_gene_name_only %in% v.external.gene.duplicated, by = external_gene_name_only, 
+    external_gene_name_only_ensg := paste0(external_gene_name_only, " (", ensembl_gene_id, ")")
+]
+
+# Update: those that are unique, just keep the name. 
+# Remove the column with name only (contains duplicates!)
+data.dt.genelabels[is.na(external_gene_name_only_ensg), external_gene_name_only_ensg := external_gene_name_only] 
+data.dt.genelabels[, external_gene_name_only := NULL]
+```
+
+Dimensions of the original mapping and that without duplicate ENSEMBL ids
+
+```{r}
+dim(map.hsa)
+dim(data.dt.genelabels)
+```
+
+Looks of the mapping:
+
+```{r}
+head(data.dt.genelabels)
+```
+
+Genes with multiple symbols:
+
+```{r}
+data.dt.genelabels[grepl("\\|\\|", external_gene_name)]
+```
+
+Genes with multiple entrez ids:
+
+```{r}
+data.dt.genelabels[grepl("\\|\\|", entrezgene_id)]
+```
+
+Make sure there are no missings or duplicates
+
+```{r}
+stopifnot(sum(is.na(data.dt.genelabels)) == 0)
+
+v.dup <- colSums(apply(data.dt.genelabels, 2, duplicated))
+stopifnot(all(v.dup == 0))
+```
+
+Provide as named vectors ready to use
+
+```{r}
+vec.ensembl2symbol <- setNames(
+  data.dt.genelabels$external_gene_name, data.dt.genelabels$ensembl_gene_id)
+head(vec.ensembl2symbol)
+
+vec.ensembl2entrez <- setNames(
+  data.dt.genelabels$entrezgene_id, data.dt.genelabels$ensembl_gene_id)
+head(vec.ensembl2entrez)
+
+# Update: succint labels
+vec.ensembl2symbolonly <- setNames(
+  data.dt.genelabels$external_gene_name_only_ensg, data.dt.genelabels$ensembl_gene_id)
+head(vec.ensembl2symbolonly)
+
+```
+
+Save internal file
+
+```{r}
+save(vec.ensembl2symbol, file = "../data/vec.ensembl2symbol.RData", compress = "xz")
+save(vec.ensembl2symbolonly, file = "../data/vec.ensembl2symbolonly.RData", compress = "xz")
+save(vec.ensembl2entrez, file = "../data/vec.ensembl2entrez.RData", compress = "xz")
+```
+
+## Update: Gene labels with improved readability
+
+Idea: for gene plots, space gets cluttered with ENSG labels, mostly useful for traceability anyway. 
+Plots can be generated with and without the verbose labels. 
+The only concern is to make sure we have as little mismatchings as possible (ENGS without a symbol)
+
+```{r}
+# map.hsa <- biomaRt::getBM(
+#     attributes = c("entrezgene_id", "ensembl_gene_id", "external_gene_name", "hgnc_symbol"),
+#     values = TRUE,
+#     mart = ensembl.hsa) %>%
+#   mutate(entrezgene_id = as.character(entrezgene_id), 
+#          hgnc_symbol = ifelse(hgnc_symbol == "", NA, hgnc_symbol), 
+#          external_gene_name = ifelse(external_gene_name == "", NA, external_gene_name))
+```
+
+Tried different attributes, the one that gives the most mappings is `external_gene_name`.
+Tested and added to the code above.
+
+
+## Reproducibility
+
+```{r}
+date()
+```
+
+```{r}
+sessionInfo()
+```

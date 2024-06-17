@@ -1,0 +1,78 @@
+Package: IST
+Type: Package
+Title: In Silico Treatment for Translating Between Animal Models and Humans
+Description: The IST package enables the translation of molecular
+    signatures between organisms, disease models or cell cultures.
+    IST simulates how the effect on the experimental organism 
+    translate into the target organism through orthology mapping.
+Version: 0.5.30
+Date: 2022-04-11
+Authors@R: c(
+    person(
+        "Sergio", "Picart-Armada", role = c("aut", "cre"), 
+        email = "sergio.picart-armada.ext@boehringer-ingelheim.com"), 
+    person(
+        "Francesc", "Fernandez-Albert", role = c("aut"),
+        email = "francesc.fernandez-albert@boehringer-ingelheim.com"))
+Depends:
+    R (>= 3.6.0)
+Imports:
+    batchtools,
+    BiocParallel,
+    biomaRt,
+    caret,
+    checkmate (>= 1.9.4),
+    data.table, 
+    e1071,
+    ggplot2,
+    grDevices,
+    grid,
+    limma,
+    magrittr,
+    methods,
+    pheatmap,
+    pls,
+    plyr, 
+    dplyr,
+    RColorBrewer,
+    stats, 
+    SummarizedExperiment,
+    utils
+Suggests:
+    BiocStyle,
+    covr,
+    knitr,
+    statmod,
+    testthat
+RoxygenNote: 7.2.3
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+VignetteBuilder: knitr
+LazyData: true
+Collate: 
+    'IST.R'
+    'all-classes.R'
+    'plot.R'
+    'show.R'
+    'predict.R'
+    'fit.R'
+    'all-methods.R'
+    'defaults.R'
+    'doc-data.R'
+    'getters.R'
+    'helpers.R'
+    'mappers.R'
+    'wrappers.R'
+License: internal
+biocViews: 
+    Software, 
+    GenePrediction, 
+    Transcriptomics, 
+    Microarray, 
+    RNASeq, 
+    GeneExpression, 
+    DifferentialExpression, 
+    StatisticalMethod, 
+    Classification, 
+    Regression, 
+    Pathways

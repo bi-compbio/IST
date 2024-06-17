@@ -1,0 +1,211 @@
+---
+title: "Stratified differential expression/abundance"
+author: "Sergio Picart-Armada"
+date: "16th July, 2019"
+output:
+  html_document:
+    toc: TRUE
+    toc_float: true
+    code_folding: hide
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, 
+                      error = FALSE, warning = FALSE, 
+                      fig.height = 4)
+```
+
+## Loading packages
+
+```{r cars}
+library(plyr)
+library(dplyr)
+library(tidyr)
+library(tibble)
+library(magrittr)
+
+library(SummarizedExperiment)
+
+library(ggplot2)
+
+library(data.table)
+
+theme_set(theme_bw())
+
+if (!dir.exists("01_data")) dir.create("01_data")
+
+set.seed(1)
+```
+
+
+
+```{r}
+# library(biomaRt)
+# 
+# mart <- useMart(biomart = "ensembl", dataset = "hsapiens_gene_ensembl")
+# 
+# attributes <- listAttributes(mart)
+# attributes[1:5,]
+# 
+# attrib <- c(
+#   "ensembl_gene_id", 
+#   "mmusculus_homolog_ensembl_gene", 
+#   "mmusculus_homolog_associated_gene_name", 
+#   "mmusculus_homolog_goc_score",
+#   "mmusculus_homolog_wga_coverage", 
+#   "mmusculus_homolog_perc_id_r1",
+#   "mmusculus_homolog_perc_id", 
+#   "mmusculus_homolog_orthology_confidence",
+#   "mmusculus_homolog_orthology_type")
+# df.ref2model <- getBM(attributes = attrib, mart = mart)
+```
+
+## Orthology mapping
+
+```{r}
+devtools::load_all()
+
+df.mouse2human <- orthIDcon("mmusculus", "hsapiens")
+
+set.seed(1)
+
+# from those human genes with multiple mappings, 
+# pick one at random
+df.orth <- df.mouse2human[sample(seq_len(nrow(df.mouse2human)), 500), ] %>%
+  select(gene, ortholog) %>%
+  group_by(ortholog) %>%
+  summarise_all(function(x) head(x, 1))
+```
+
+## Human data
+
+```{r}
+set.seed(2)
+orth.ids <- sample(df.orth$ortholog, 300)
+
+n.hsa.pergroup <- 30
+k.hsa <- nrow(df.orth)
+vals.hsa.y <- c(-1, 1)
+means.hsa.x <- c(-1, 1)/2
+
+y <- rep(vals.hsa.y, times = n.hsa.pergroup)
+
+generate.mat <- function(gene.ids, n, prefix = "sample", seed = 1, ...) {
+    set.seed(seed)
+    k <- length(gene.ids)
+    mat <- matrix(rnorm(n = k*n, ...), ncol = k)
+    colnames(mat) <- gene.ids
+    rownames(mat) <- paste0(prefix, seq_len(n))
+    mat
+}
+generate.fc <- function(gene.ids, seed = 1) {
+  set.seed(seed)
+  
+  df <- data.frame(
+    logFC = rnorm(n = length(gene.ids)), 
+    adj.P.Val = runif(n = length(gene.ids))
+  )
+  rownames(df) <- gene.ids
+  
+  df
+}
+
+X.hsa <- rbind(
+    generate.mat(gene.ids = orth.ids, n = n.hsa.pergroup, 
+                 prefix = "cnt", mean = .5, seed = 1, sd = 1), 
+    generate.mat(gene.ids = orth.ids, n = n.hsa.pergroup, 
+                 prefix = "dis", mean = -.5, seed = 2, sd = 2)
+)
+y.hsa <- rep(c(1, -1), each = n.hsa.pergroup) %>%
+    set_names(rownames(X.hsa)) 
+
+```
+
+## Murine FCs
+
+```{r}
+set.seed(3)
+gene.ids <- sample(df.orth$gene, 300)
+
+fc.mmu.rnd <- generate.fc(gene.ids, seed = 4)
+
+fc.mmu.true <- fc.mmu.rnd
+fc.mmu.true$logFC <- 1
+```
+
+```{r}
+# data.table with many signatures
+n.dt.sig <- 10
+dt.fc.mmu <- plyr::ldply(
+  setNames(seq_len(n.dt.sig), paste0("Signature", seq_len(n.dt.sig))), 
+  function(seed) {
+    generate.fc(gene.ids, seed = seed) %>%
+      tibble::rownames_to_column("gene.id")
+  }, .id = "sig.id"
+) %>% 
+  mutate_if(is.character, as.factor) %>%
+  as.data.table
+
+# ..and dataframe and metadata
+set.seed(1)
+df.meta.mmu <- data.frame(
+  sig.id = levels(dt.fc.mmu$sig.id), 
+  sig.org = "mmusculus", 
+  sig.attr1 = sample(LETTERS, n.dt.sig, replace = TRUE), 
+  sig.attr2 = sample(letters, n.dt.sig, replace = TRUE), 
+  sig.attr3 = sample(n.dt.sig)
+)
+```
+
+
+## Pathway data
+
+```{r}
+generate_pathways <- function(genes, sizes, prefix = "path", seed = 1) {
+  set.seed(seed)
+  ls.path <- setNames(sizes, paste0(prefix, seq_along(sizes)))
+  
+  plyr::ldply(
+    ls.path, function(x) 
+      data.frame(gene.id = sample(genes, size = x)), 
+    .id = "path.id"
+  )
+}
+
+path.hsa.oc <- generate_pathways(colnames(X.hsa), rep(30, 10), seed = 1) %>%
+  mutate_all(as.character)
+path.hsa.bin <- generate_pathways(colnames(X.hsa), rep(30, 10), seed = 2) %>%
+  mutate_all(as.character)
+
+stopifnot(!identical(path.hsa.oc, path.hsa.bin))
+```
+
+
+## Save data
+
+```{r}
+sample.data.ist <- list(
+    X.hsa = X.hsa, 
+    y.hsa = y.hsa, 
+    fc.mmu.rnd = fc.mmu.rnd, 
+    fc.mmu.true = fc.mmu.true, 
+    path.hsa.oc = path.hsa.oc, 
+    path.hsa.bin = path.hsa.bin,
+    df.orth = df.orth, 
+    dt.fc.mmu = dt.fc.mmu, 
+    df.meta.mmu = df.meta.mmu
+)
+
+save(sample.data.ist, file = "../../data/sample.data.ist.RData", compress = "xz")
+```
+
+## Reproducibility
+
+```{r}
+date()
+```
+
+```{r}
+sessionInfo()
+```

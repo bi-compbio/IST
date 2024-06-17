@@ -1,0 +1,316 @@
+---
+title: "New small synthetic data"
+author: "Sergio Picart-Armada"
+date: "2nd March, 2020"
+output:
+  html_document:
+    toc: TRUE
+    toc_float: true
+    code_folding: hide
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, 
+                      error = FALSE, warning = FALSE, 
+                      fig.height = 4)
+```
+
+## Loading packages
+
+```{r cars}
+library(plyr)
+library(dplyr)
+library(tidyr)
+library(tibble)
+library(magrittr)
+
+library(SummarizedExperiment)
+
+library(ggplot2)
+
+library(pcaMethods)
+library(data.table)
+
+theme_set(theme_bw())
+
+if (!dir.exists("02_data")) dir.create("02_data")
+
+set.seed(1)
+```
+
+Generate data with:
+
+* Signatures: 
+  - 3 organisms (mmu, rno, hsa)
+  - 6 signatures
+  - Metadata: treatment/animal model
+
+* Pathways
+  - 6 pathways
+  - 3 types (signal, mixed, noise) 
+  - Another metadata column
+  
+* Reference data
+  - Quantitative y: -2 to 2
+  - 8 patients per group
+  - 300 genes: 150 with signal, 150 with noise
+  - Signal: mean(x_i) = mean(y_i), by class. Noise: mean(x_i) = 0
+
+## Orthology mapping
+
+```{r}
+devtools::load_all()
+
+df.mouse2human <- orthIDcon("mmusculus", "hsapiens")
+df.rat2human <- orthIDcon("rnorvegicus", "hsapiens")
+df.human2human <- orthIDsingle("hsapiens")
+
+set.seed(1)
+list.allorthologs <- list(
+  mmusculus = df.mouse2human[sample(nrow(df.mouse2human), 100)], 
+  rnorvegicus = df.rat2human[sample(nrow(df.rat2human), 100)], 
+  hsapiens = df.human2human[sample(nrow(df.human2human), 100)])
+
+df.allorthologs <- do.call(rbind, list.allorthologs)
+
+# from those human genes with multiple mappings, 
+# pick one at random
+df.orth <- df.allorthologs %>%
+  select(gene, ortholog) %>%
+  group_by(ortholog) %>%
+  summarise_all(function(x) head(x, 1))
+```
+
+## Human data
+
+```{r}
+set.seed(2)
+id.signal <- sample(df.orth$ortholog, 150)
+id.noise <- setdiff(df.orth$ortholog, id.signal)
+
+df.signal <- filter(df.orth, ortholog %in% id.signal)
+df.noise <- filter(df.orth, ortholog %in% id.noise)
+
+n.hsa.pergroup <- 8
+k.hsa <- nrow(df.orth)
+vals.hsa.y <- c(-2, -1, 0, 1, 2)
+means.hsa.x <- c(-2, -1, 0, 1, 2)
+
+y <- rep(vals.hsa.y, times = n.hsa.pergroup)
+
+generate.mat <- function(gene.ids, n, prefix = "sample", seed = 1, ...) {
+    set.seed(seed)
+    k <- length(gene.ids)
+    mat <- matrix(rnorm(n = k*n, ...), ncol = k)
+    colnames(mat) <- gene.ids
+    rownames(mat) <- paste0(prefix, seq_len(n))
+    mat
+}
+generate.fc <- function(gene.ids, seed = 1, ...) {
+  set.seed(seed)
+  
+  df <- data.frame(
+    logFC = rnorm(n = length(gene.ids), ...), 
+    adj.P.Val = runif(n = length(gene.ids))
+  )
+  rownames(df) <- gene.ids
+  
+  df
+}
+
+# generate signal
+list.X.signal <- mapply(
+    generate.mat, 
+    mean = means.hsa.x, 
+    seed = seq_along(means.hsa.x), 
+    prefix = paste0("x_y_", means.hsa.x, "_"), 
+    MoreArgs = list(
+      gene.ids = id.signal, 
+      n = n.hsa.pergroup, 
+      sd = 2
+    ), 
+    SIMPLIFY = FALSE
+)
+
+# generate noise
+list.X.noise <- mapply(
+    generate.mat, 
+    prefix = paste0("x_y_", means.hsa.x, "_"), 
+    seed = seq_along(means.hsa.x), 
+    MoreArgs = list(
+      gene.ids = id.noise, 
+      n = n.hsa.pergroup, 
+      mean = 0, 
+      sd = 2
+    ), 
+    SIMPLIFY = FALSE
+)
+
+X.hsa <- cbind(
+  do.call(rbind, list.X.signal), 
+  do.call(rbind, list.X.noise)
+)
+
+
+y.hsa <- rep(vals.hsa.y, each = n.hsa.pergroup) %>%
+    set_names(rownames(X.hsa)) 
+
+
+de.genes <- IST::get.de.genes(X.hsa, y.hsa)
+```
+
+## Murine FCs
+
+```{r}
+set.seed(3)
+
+fc.mmu.rnd1 <- generate.fc(intersect(df.signal$gene, df.mouse2human$gene), seed = 4)
+fc.mmu.rnd2 <- generate.fc(intersect(df.noise$gene, df.mouse2human$gene), seed = 5)
+
+fc.rno.true1 <- generate.fc(intersect(df.signal$gene, df.rat2human$gene), seed = 10)
+fc.rno.true1$logFC <- 1
+
+fc.rno.true2 <- head(fc.rno.true1, nrow(fc.rno.true1)/2)
+
+fc.hsa.true1 <- generate.fc(df.signal$ortholog, seed = 6, mean = 1, sd = .15)
+fc.hsa.opposite1 <- generate.fc(df.orth$ortholog, seed = 7, mean = -3, sd = .5)
+```
+
+```{r}
+list.sig <- list(
+  mmu.rnd.1 = fc.mmu.rnd1, 
+  mmu.rnd.2 = fc.mmu.rnd2, 
+  rno.true.1 = fc.rno.true1, 
+  rno.true.2 = fc.rno.true2, 
+  hsa.true.1 = fc.hsa.true1, 
+  hsa.opposite.1 = fc.hsa.opposite1
+)
+
+# ..and dataframe and metadata
+set.seed(1)
+df.meta.sig <- data.frame(
+  sig.id = names(list.sig), 
+  sig.name = c("Mouse random AnMod", "Mouse random Trt", 
+               "Rat true AnMod", "Rat true AnMod (half)", 
+               "Human true AnMod", "Human overshoot Trt"),
+  sig.org = c("mmusculus", "mmusculus", 
+              "rnorvegicus", "rnorvegicus", 
+              "hsapiens", "hsapiens"), 
+  sig.source = c("Study1", "Study1", "Study1", 
+                 "Study1", "Study2", "Study3"), 
+  sig.type = c("AnimalModel", "Treatment", "AnimalModel", 
+               "AnimalModel", "AnimalModel", "Treatment"), 
+  sig.db = rep("Made-up", 6), 
+  sig.hassignal = c(FALSE, FALSE, TRUE, TRUE, TRUE, TRUE), 
+  stringsAsFactors = FALSE
+)
+```
+
+```{r}
+sapply(list.sig, nrow)
+```
+
+## Pathway data
+
+```{r}
+generate_pathways <- function(genes, sizes, prefix = "path", seed = 1) {
+  set.seed(seed)
+  ls.path <- setNames(sizes, paste0(prefix, seq_along(sizes)))
+  
+  plyr::ldply(
+    ls.path, function(x) 
+      data.frame(gene.id = sample(genes, size = x)), 
+    .id = "path.id"
+  ) %>% mutate_all(as.character)
+}
+
+path.hsa.signal <- generate_pathways(id.signal, c(75, 25), prefix = "signal", seed = 1)
+path.hsa.mixed <- generate_pathways(df.orth$ortholog, c(200, 50), prefix = "mixed", seed = 2) 
+path.hsa.noise <- generate_pathways(id.noise, c(75, 25), prefix = "noise", seed = 1)
+
+df.path <- rbind(
+  path.hsa.signal, 
+  path.hsa.mixed, 
+  path.hsa.noise
+)
+
+df.meta.path <- data.frame(
+  path.id = c("signal1", "signal2", "mixed1", "mixed2", "noise1", "noise2"), 
+  path.name = c("Signal large", "Signal small", 
+                "Mixed large", "Mixed small", 
+                "Noisy large", "Noisy small"),
+  path.source = c("[A]", "[A]", "[A]", 
+                  "[C]", "[C]", "[C]"), 
+  path.type = c("Type1", "Type2", "Type2", 
+                "Type3", "Type3", "Type4"), 
+  path.db = "Made-up", 
+  path.hassignal = c(TRUE, TRUE, TRUE, TRUE, FALSE, FALSE), 
+  stringsAsFactors = FALSE
+)
+```
+
+## Descriptive 
+
+### Reference data
+
+Low dimensional representation
+
+```{r}
+pca.hsa <- pca(X.hsa, nPcs = 2, scale = "uv", center = TRUE)
+
+df.pca <- cbind(scores(pca.hsa), data.frame(y = as.factor(y.hsa)))
+
+ggplot(df.pca, aes(x = PC1, y = PC2, colour = y)) +
+  geom_point()
+```
+
+### Signatures
+
+Distributions of logFCs
+
+```{r}
+ldply(list.sig, identity, .id = "name") %>%
+  ggplot(aes(x = logFC)) +
+  geom_vline(xintercept = 0, lty = 2) +
+  geom_histogram() +
+  facet_wrap(~name)
+```
+
+### Pathways
+
+Size and proportion of truly differential genes
+
+```{r}
+group_by(df.path, path.id) %>%
+  summarise(n_genes = n(), 
+            prop_true = mean(gene.id %in% id.signal))
+```
+
+
+## Save data
+
+```{r}
+sample.env.ist <- list(
+    X.hsa = X.hsa, 
+    y.hsa = y.hsa, 
+    de.genes = de.genes, 
+    list.sig = list.sig, 
+    df.meta.sig = df.meta.sig, 
+    list.orth = list.allorthologs, 
+    df.path = df.path, 
+    df.meta.path = df.meta.path
+) %>% list2env
+
+save(sample.env.ist, file = "../../data/sample.env.ist.RData", compress = "xz")
+```
+
+## Reproducibility
+
+```{r}
+date()
+```
+
+```{r}
+sessionInfo()
+```
